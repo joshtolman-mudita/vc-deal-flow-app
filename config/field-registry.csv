@@ -1,0 +1,79 @@
+field_name,type,location,source_of_truth,sync_direction,update_policy,conflict_policy,required,allowed_values,min,max,hubspot_property,hubspot_object,app_path,notes,required_on_create,required_mode,create_default,ui_order
+Company Name,string,shared,app,app-to-hs,app-wins,source-wins,true,,,,dealname,deal,companyName,Primary identifier,both,hard,
+Company URL,url,shared,app,app-to-hs,app-wins,source-wins,false,,,,website,deal,companyUrl,Conditional write,company,warning,
+Company Description,string,app-only,,none,,,false,,,,,,companyDescription,User-provided description
+Company One-Liner,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,description,deal,companyOneLiner,Fallback for deal description
+Industry,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,industry,company,industry,AI-derived vertical/market sector
+Recommendation,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_recommendation,deal,recommendation,
+Status,enum,app-only,,none,,,false,in_progress;completed;passed;declined,,,diligence_status,deal,status,DEPRECATED: Use HubSpot Deal Stage instead
+Diligence Score,number,shared,app,app-to-hs,app-wins,source-wins,false,,0,100,diligence_score,deal,score.overall,AI-generated overall score
+Data Quality,number,shared,app,app-to-hs,app-wins,source-wins,false,,0,100,diligence_data_quality,deal,score.dataQuality,
+Scored At,date,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_date,deal,score.scoredAt,
+Diligence Link,url,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_link,deal,,Generated URL; not stored on record
+Deal Stage,enum,app-only,,none,,,false,,,,dealstage,deal,,DEPRECATED: Was auto-calculated from score; now using HS Deal Stage ID directly
+ARR,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_arr,deal,metrics.arr.value,
+TAM,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_tam,deal,metrics.tam.value,
+ACV,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,diligence_acv,deal,metrics.acv.value,
+Investment Decision,enum,shared,app,app-to-hs,app-wins,source-wins,false,invested;passed;pending,,,investment_decision,deal,decisionOutcome.decision,Conditional write
+Decision Reason,string,shared,app,app-to-hs,app-wins,source-wins,false,,,,decision_reason,deal,decisionOutcome.decisionReason,Conditional write
+Diligence Notes,rich-text,shared,app,app-to-hs,app-wins,source-wins,false,,,,hs_next_step,deal,,Generated summary; appended to existing
+HS Deal Stage ID,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,dealstage,deal,hubspotDealStageId,PRIMARY STATUS FIELD: Bidirectionally synced; replaces app Status field
+HS Deal Stage Label,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,dealstage,deal,hubspotDealStageLabel,Display label for stage; synced with stage ID
+HS Pipeline ID,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,pipeline,deal,hubspotPipelineId,Read from HS deal
+HS Pipeline Label,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,pipeline,deal,hubspotPipelineLabel,Resolved label
+HS Deal Amount,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,amount,deal,hubspotAmount,Formatted display amount
+HS Synced At,date,app-only,,none,,,false,,,,,,hubspotSyncedAt,Timestamp of last sync
+HS Company Name,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,name,company,hubspotCompanyData.name,
+HS Company Domain,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,domain,company,hubspotCompanyData.domain,
+HS Company Description,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,description,company,hubspotCompanyData.description,Founder-provided company description
+HS Company Website,url,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,website,company,hubspotCompanyData.website,
+HS Annual Revenue,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,annualrevenue,company,hubspotCompanyData.annualRevenue,Founder-provided contracted ARR
+HS Number of Employees,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,numberofemployees,company,hubspotCompanyData.numberOfEmployees,
+HS Founded Year,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,founded_year,company,hubspotCompanyData.foundedYear,
+HS City,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,city,company,hubspotCompanyData.city,
+HS State,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,state,company,hubspotCompanyData.state,
+HS Country,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,country,company,hubspotCompanyData.country,
+HS LinkedIn URL,url,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,linkedin_company_page,company,hubspotCompanyData.linkedinUrl,
+HS Industry Sector,multi-select,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,what_industry_sector_do_you_operate_in___please_select_all_that_apply_,company,hubspotCompanyData.industrySector,Founder intake multi-select; normalized with normalizeMultiSelect
+HS Investment Sector,multi-select,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,investment_sector,company,hubspotCompanyData.investmentSector,Normalized with normalizeMultiSelect
+HS Industry,multi-select,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,industry,company,hubspotCompanyData.industry,Broad enum; normalized with normalizeMultiSelect
+HS Product Categorization,multi-select,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,how_would_you_categorize_your_product_service___please_check_all_that_apply_,company,hubspotCompanyData.productCategorization,Normalized with normalizeMultiSelect
+HS Funding Stage,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,what_s_the_current_stage_of_your_company_s_funding_,company,hubspotCompanyData.fundingStage,
+HS Funding Amount,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,funding_amount,company,hubspotCompanyData.fundingAmount,Editable in app Metrics table; write-through to HubSpot company
+HS Deal Raise Amount,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,raise_amount,deal,metrics.fundingAmount.value,Deal-level raise amount (preferred over company funding amount)
+HS Deal Committed Funding,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,committed_funding,deal,metrics.committed.value,Deal-level committed funding (preferred over company commitments)
+HS Deal Valuation,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,deal_valuation,deal,metrics.valuation.value,Deal-level post-money valuation in millions (preferred over company funding valuation)
+HS Deal Terms,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,deal_terms,deal,metrics.dealTerms.value,Deal-level terms text (preferred over company funding valuation text)
+HS Priority,enum,shared,hubspot,bidirectional,latest-wins,source-wins,false,HIGH;MEDIUM;LOW,,,hs_priority,deal,priority,Deal-level priority synced from HubSpot hs_priority
+HS Funding Valuation,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,funding_valuation,company,hubspotCompanyData.fundingValuation,Editable in app Metrics table; write-through to HubSpot company
+HS Current Commitments,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,current_commitments,company,hubspotCompanyData.currentCommitments,Editable in app Metrics table; write-through to HubSpot company
+HS TAM Range,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,what_is_the_tam___sam___som_of_your_business_,company,hubspotCompanyData.tamRange,Founder intake TAM
+HS Current Runway,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,what_is_your_current_runway_,company,hubspotCompanyData.currentRunway,Falls back to runway property
+HS Deal Current Runway,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,current_runway,deal,metrics.currentRunway.value,Deal-level runway in months (preferred)
+HS Deal Post Funding Runway,string,shared,hubspot,bidirectional,latest-wins,source-wins,false,,,,post_runway_funding,deal,metrics.postFundingRunway.value,Deal-level post funding runway in months (preferred)
+HS Post-Funding Runway,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,post_funding_runway,company,hubspotCompanyData.postFundingRunway,
+HS Lead Information,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,lead_information,company,hubspotCompanyData.leadInformation,
+HS Pitch Deck URL,url,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,pitch_deck,company,hubspotCompanyData.pitchDeckUrl,Auto-imported for AI scoring
+HS Anything Else,string,shared,hubspot,hs-to-app,hubspot-wins,source-wins,false,,,,anything_else,company,hubspotCompanyData.anythingElse,
+HS Runway (fallback),string,hubspot-only,,hs-to-app,hubspot-wins,source-wins,false,,,,runway,company,,Fallback for current runway
+Founders,object,app-only,,none,,,false,,,,,,founders,Array of name/linkedin/title
+Notes (legacy),string,app-only,,none,,,false,,,,,,notes,Deprecated single note field
+Categorized Notes,object,app-only,,none,,,false,,,,,,categorizedNotes,Multiple categorized notes
+Questions,object,app-only,,none,,,false,,,,,,questions,Open questions and answers tracker
+Google Drive Folder ID,string,app-only,,none,,,false,,,,,,googleDriveFolderId,
+Documents,object,app-only,,none,,,false,,,,,,documents,Array of uploaded/linked docs
+Score (full),object,app-only,,none,,,false,,,,,,score,Full scoring object with categories/criteria
+Chat History,object,app-only,,none,,,false,,,,,,chatHistory,AI chat conversation history
+Metrics,object,app-only,,none,,,false,,,,,,metrics,Full metrics object with source tracking
+YoY Growth Rate,string,app-only,,none,,,false,,,,,,metrics.yoyGrowthRate.value,Not synced to HubSpot
+Market Growth Rate,string,app-only,,none,,,false,,,,,,metrics.marketGrowthRate.value,Derived from external TAM/market research for Market Growth criterion
+Decision Date,date,app-only,,none,,,false,,,,,,decisionOutcome.decisionDate,
+Actual Performance,string,app-only,,none,,,false,,,,,,decisionOutcome.actualPerformance,Post-investment notes
+Created At,date,app-only,,none,,,false,,,,,,createdAt,
+Updated At,date,app-only,,none,,,false,,,,,,updatedAt,
+HubSpot Deal ID,string,app-only,,none,,,false,,,,,,hubspotDealId,Link to HubSpot deal
+HubSpot Company ID,string,app-only,,none,,,false,,,,,,hubspotCompanyId,Link to HubSpot company
+HubSpot Company Name,string,app-only,,none,,,false,,,,,,hubspotCompanyName,Cached company name
+HS Last Modified Date,date,hubspot-only,,none,,,false,,,,hs_lastmodifieddate,deal,,Read-only metadata
+HS Create Date,date,hubspot-only,,none,,,false,,,,createdate,deal,,Read-only metadata
+HS Object ID,string,hubspot-only,,none,,,false,,,,hs_object_id,deal,,Read-only metadata
