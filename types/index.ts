@@ -10,13 +10,19 @@ export interface Deal {
   date: string;
   status: "Active" | "Shared" | "Archived";
   description?: string;
+  companyDescription?: string; // Description from the associated HubSpot company record
+  companyIndustry?: string; // Industry from the associated HubSpot company record
   hubspotId?: string;
   pipeline?: string;
-  nextSteps?: string;
   dealTerms?: string;
+  raiseAmount?: number;       // Total raise amount in millions
+  committedFunding?: number;  // Already committed/allocated in millions
+  dealValuation?: number;     // Post-money valuation in millions
+  arr?: string;               // Annual Recurring Revenue (raw string from diligence, e.g. "$1.2M")
   companyId?: string; // Associated HubSpot company ID
   createdate?: string; // HubSpot creation date
   url?: string; // HubSpot record URL
+  roundStillOpen?: string; // Whether the funding round is still open
   diligenceId?: string;
   diligenceScore?: number;
   diligenceStatus?: "in_progress" | "completed" | "passed" | "declined";

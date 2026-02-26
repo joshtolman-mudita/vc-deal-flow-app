@@ -55,14 +55,29 @@ function buildHubSpotDealUrl(dealId: string): string {
 type HubSpotCreateObject = "company" | "deal";
 const HUBSPOT_DEAL_CURRENT_RUNWAY_PROPERTY = process.env.HUBSPOT_DEAL_CURRENT_RUNWAY_PROPERTY || "current_runway";
 const HUBSPOT_DEAL_POST_FUNDING_RUNWAY_PROPERTY = process.env.HUBSPOT_DEAL_POST_FUNDING_RUNWAY_PROPERTY || "post_runway_funding";
-const HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY = process.env.HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY || "raise_amount";
-const HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY = process.env.HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY || "committed_funding";
-const HUBSPOT_DEAL_VALUATION_PROPERTY = process.env.HUBSPOT_DEAL_VALUATION_PROPERTY || "deal_valuation";
+const HUBSPOT_DEAL_ARR_PROPERTY = process.env.HUBSPOT_DEAL_ARR_PROPERTY || "portco_arr";
+const HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY = process.env.HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY || "raise_amount_in_millions";
+const HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY = process.env.HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY || "committed_funding_in_millions";
+const HUBSPOT_DEAL_VALUATION_PROPERTY = process.env.HUBSPOT_DEAL_VALUATION_PROPERTY || "deal_valuation_post_money_in_millions";
 const HUBSPOT_DEAL_TERMS_PROPERTY = process.env.HUBSPOT_DEAL_TERMS_PROPERTY || "deal_terms";
 const HUBSPOT_DEAL_PRIORITY_PROPERTY = process.env.HUBSPOT_DEAL_PRIORITY_PROPERTY || "hs_priority";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Normalize an ARR string (e.g. "$1.2M", "$160k") to a plain dollar integer string for HubSpot. */
+export function normalizeArrToDollars(raw: string): string {
+  if (!raw) return "";
+  const clean = raw.replace(/[$,\s]/g, "").toLowerCase();
+  const match = clean.match(/^([\d.]+)([kmb]?)$/);
+  if (!match) return "";
+  const n = parseFloat(match[1]);
+  if (!Number.isFinite(n)) return "";
+  if (match[2] === "b") return String(Math.round(n * 1_000_000_000));
+  if (match[2] === "m") return String(Math.round(n * 1_000_000));
+  if (match[2] === "k") return String(Math.round(n * 1_000));
+  return String(Math.round(n));
 }
 
 function isHubSpotRateLimitError(error: any): boolean {
@@ -823,12 +838,12 @@ export function prepareHubSpotCreatePayload(
     pipeline: normalizeCreateValue(record.hubspotPipelineId || defaultPipelineId),
     dealstage: normalizeCreateValue(record.hubspotDealStageId || defaultDealStageId),
     amount: normalizeCreateValue(record.hubspotAmount || ""),
-    [HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY]: normalizeCreateValue(
+    [HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY]: normalizeValuationInMillionsForDeal(
       record.metrics?.fundingAmount?.value ||
       record.hubspotCompanyData?.fundingAmount ||
       ""
     ),
-    [HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY]: normalizeCreateValue(
+    [HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY]: normalizeValuationInMillionsForDeal(
       record.metrics?.committed?.value ||
       record.hubspotCompanyData?.currentCommitments ||
       ""
@@ -1249,15 +1264,15 @@ export async function syncDiligenceToHubSpot(
     diligence_status: record.status,
     diligence_link: diligenceLink,
     diligence_data_quality: record.score.dataQuality.toString(),
-    diligence_arr: metricValue(record, "arr") || "",
+    [HUBSPOT_DEAL_ARR_PROPERTY]: normalizeArrToDollars(metricValue(record, "arr") || ""),
     diligence_tam: metricValue(record, "tam") || "",
     diligence_acv: metricValue(record, "acv") || "",
     diligence_recommendation: record.recommendation || "",
     [HUBSPOT_DEAL_PRIORITY_PROPERTY]: normalizeCreateValue(record.priority || ""),
-    [HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY]: normalizeCreateValue(
+    [HUBSPOT_DEAL_RAISE_AMOUNT_PROPERTY]: normalizeValuationInMillionsForDeal(
       record.metrics?.fundingAmount?.value || ""
     ),
-    [HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY]: normalizeCreateValue(
+    [HUBSPOT_DEAL_COMMITTED_FUNDING_PROPERTY]: normalizeValuationInMillionsForDeal(
       record.metrics?.committed?.value || ""
     ),
     [HUBSPOT_DEAL_VALUATION_PROPERTY]: normalizeValuationInMillionsForDeal(

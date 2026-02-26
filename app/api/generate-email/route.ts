@@ -1,36 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import { promises as fs } from "fs";
-import path from "path";
 import hubspotClient, { isHubSpotConfigured } from "@/lib/hubspot";
+import { buildDiligenceLookupMaps, resolveDiligenceContextForDeal } from "@/lib/matching-diligence";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
-// Helper to load diligence data for a company
-async function loadDiligenceForCompany(companyName: string) {
-  try {
-    const diligenceDir = path.join(process.cwd(), "diligence-data");
-    const files = await fs.readdir(diligenceDir);
-    
-    // Find diligence file matching company name
-    const matchingFile = files.find(file => {
-      const normalized = file.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const companyNormalized = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
-      return normalized.includes(companyNormalized);
-    });
-    
-    if (matchingFile) {
-      const content = await fs.readFile(path.join(diligenceDir, matchingFile), "utf-8");
-      const diligence = JSON.parse(content);
-      return diligence;
-    }
-  } catch (error) {
-    // Diligence data not available, continue without it
-  }
-  return null;
-}
 
 // Helper to fetch contact form submission data from HubSpot
 async function fetchContactFormData(dealId: string) {
@@ -113,19 +88,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Load diligence records once for all deals
+    const diligenceLookup = await buildDiligenceLookupMaps();
+
     // Build the prompt for email generation - provide ALL available data
     const dealsContext = await Promise.all(deals.map(async (deal: any, idx: number) => {
       const dealInfo: string[] = [`Deal ${idx + 1}: ${deal.name}`];
-      
+
       if (deal.website || deal.companyUrl) {
         dealInfo.push(`   Website: ${deal.website || deal.companyUrl}`);
       }
-      if (deal.industry) {
-        dealInfo.push(`   Industry: ${deal.industry}`);
+
+      // Use company industry if available, fall back to deal industry
+      const industry = deal.companyIndustry || deal.industry;
+      if (industry) {
+        dealInfo.push(`   Industry: ${industry}`);
       }
-      if (deal.description) {
-        dealInfo.push(`   Description: ${deal.description}`);
+
+      // Use company description if available, fall back to deal description
+      const description = deal.companyDescription || deal.description;
+      if (description) {
+        dealInfo.push(`   Description: ${description}`);
       }
+
       if (deal.dealTerms) {
         dealInfo.push(`   Deal Terms: ${deal.dealTerms}`);
       }
@@ -136,7 +121,7 @@ export async function POST(request: NextRequest) {
         dealInfo.push(`   Stage: ${deal.stageName || deal.stage}`);
       }
       
-      // Try to fetch contact form data from HubSpot
+      // Fetch contact form data from HubSpot
       const formData = await fetchContactFormData(deal.id || deal.hubspotId);
       if (formData) {
         dealInfo.push(`   === FOUNDER/FORM SUBMISSION DATA ===`);
@@ -145,19 +130,32 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Try to load diligence data for additional context
-      const diligence = await loadDiligenceForCompany(deal.name);
-      if (diligence) {
-        dealInfo.push(`   === ADDITIONAL DILIGENCE INSIGHTS ===`);
-        if (diligence.investmentThesis) {
-          const thesis = diligence.investmentThesis;
-          if (thesis.problemSolving) dealInfo.push(`   Problem: ${thesis.problemSolving}`);
-          if (thesis.solution) dealInfo.push(`   Solution: ${thesis.solution}`);
-          if (thesis.exciting) dealInfo.push(`   Why Exciting: ${thesis.exciting}`);
-          if (thesis.customerProfile) dealInfo.push(`   Customer Profile: ${thesis.customerProfile}`);
+      // Resolve diligence context from GCS-backed storage
+      const diligenceContext = resolveDiligenceContextForDeal(deal, diligenceLookup);
+      if (diligenceContext) {
+        dealInfo.push(`   === DILIGENCE INSIGHTS ===`);
+        if (diligenceContext.companyDescription && !description) {
+          dealInfo.push(`   Company Description: ${diligenceContext.companyDescription}`);
         }
-        if (diligence.aiScore) {
-          dealInfo.push(`   AI Score: ${diligence.aiScore}/100`);
+        if (diligenceContext.thesis?.problemSolving) {
+          dealInfo.push(`   Problem: ${diligenceContext.thesis.problemSolving}`);
+        }
+        if (diligenceContext.thesis?.solution) {
+          dealInfo.push(`   Solution: ${diligenceContext.thesis.solution}`);
+        }
+        if (diligenceContext.whyFits?.length) {
+          dealInfo.push(`   Why We Like It:`);
+          diligenceContext.whyFits.forEach(item => dealInfo.push(`     - ${item}`));
+        }
+        if (diligenceContext.thesis?.exciting?.length) {
+          dealInfo.push(`   What's Exciting:`);
+          diligenceContext.thesis.exciting.forEach(item => dealInfo.push(`     - ${item}`));
+        }
+        if (diligenceContext.thesis?.idealCustomer) {
+          dealInfo.push(`   Ideal Customer: ${diligenceContext.thesis.idealCustomer}`);
+        }
+        if (diligenceContext.score !== undefined) {
+          dealInfo.push(`   Diligence Score: ${diligenceContext.score}/100`);
         }
       }
       

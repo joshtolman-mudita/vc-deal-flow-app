@@ -16,6 +16,37 @@ export interface ChangelogVersion {
 
 export const CHANGELOG: ChangelogVersion[] = [
   {
+    version: "2.2.0",
+    date: "2026-02-26",
+    sections: {
+      added: [
+        "Deal Flow page: company search box in the filter toolbar (real-time, same design as diligence page).",
+        "Deal Flow page: ARR column showing annual recurring revenue synced from the linked diligence record via HubSpot portco_arr deal property.",
+        "Deal Flow page: ARR (Min $) filter in the toolbar — click-to-edit, accepts full dollar amounts, displays formatted ($160K, $1.2M).",
+        "Deal Flow page: Post Money Valuation (Max $M) and Remaining Round (Min $M) filters are now click-to-edit fields — shows formatted value when set, 'Any' when unset.",
+        "Deal Flow page: Deal Stage column now displays as a color-coded badge (Deal 0 = slate, Deal 1 = blue, … Deal 7/Closed = emerald/red) and is click-to-edit inline — selecting a new stage updates HubSpot immediately.",
+        "Diligence page: company search box in the filter toolbar matching the Deal Flow page.",
+        "ARR bidirectional sync: saving key metrics in a diligence record now writes ARR to the portco_arr HubSpot deal property as a plain dollar integer.",
+        "ARR backfill script (scripts/backfill-arr.js) to populate portco_arr for existing diligence records.",
+      ],
+      changed: [
+        "Navigation and page title renamed from 'Deals' to 'Deal Flow'.",
+        "Round Status filter simplified to two independent toggles (Open / Closed) — both on or both off shows all; defaults to Open only.",
+        "Description column is wider (w-72), truncates at 4 lines, and shows the full text on hover.",
+        "Post Money Valuation filter label updated to 'Post Money Valuation (Max $M)'; Remaining Round label updated to 'Remaining Round (Min $M)'.",
+        "Industry filter in the drawer is now fully faceted — options update in real time based on all other active filters (name search, round status, valuation, room left).",
+        "Diligence page default sort changed to priority descending (High → Medium → Low → None) with score descending as tiebreaker.",
+        "HubSpot sync badges removed from the key metrics grid on the diligence detail page.",
+        "ARR data layer: portco_arr (number, plain dollars) is now fetched from HubSpot and formatted to $1.2M / $160K for display; diligence record ARR used as fallback when HubSpot value is not yet set.",
+        "Removed subtitle 'Manage and filter deals from HubSpot' from the Deal Flow page header.",
+      ],
+      fixed: [
+        "Duplicate deal rows caused by HubSpot API returning the same deal ID on multiple pages — deduplicated on both fresh fetch and cache load.",
+        "roundStillOpenFilter reference error on the Deal Flow page after state was migrated to independent filterOpen/filterClosed booleans.",
+      ],
+    },
+  },
+  {
     version: "2.1.1",
     date: "2026-02-19",
     sections: {
@@ -239,7 +270,7 @@ export const CHANGELOG: ChangelogVersion[] = [
   },
 ];
 
-export const CURRENT_VERSION = "2.1.1";
+export const CURRENT_VERSION = "2.2.0";
 
 export function getLatestVersion(): ChangelogVersion {
   return CHANGELOG[0];

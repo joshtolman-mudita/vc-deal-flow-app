@@ -67,7 +67,7 @@ gcloud run deploy $SERVICE_NAME `
   --memory=512Mi `
   --cpu=1 `
   --timeout=300s `
-  --min-instances=0 `
+  --min-instances=1 `
   --max-instances=3 `
   --env-vars-file=.env.production.yaml `
   --allow-unauthenticated

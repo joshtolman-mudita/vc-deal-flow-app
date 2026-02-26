@@ -7,6 +7,9 @@ export interface DiligenceMatchContext {
   dataQuality?: number;
   industry?: string;
   recommendation?: string | null;
+  companyDescription?: string; // From thesis check or HubSpot company record
+  whyFits?: string[]; // Thesis check "why it fits" bullets
+  whyNotFit?: string[]; // Thesis check "why it might not fit" bullets
   hubspotCompany?: {
     industrySector?: string;
     investmentSector?: string;
@@ -30,12 +33,21 @@ function normalizeName(name?: string): string {
 }
 
 function toContext(record: DiligenceRecord): DiligenceMatchContext {
+  // Best available company description: thesis check snapshot → HubSpot company → empty
+  const companyDescription =
+    record.thesisFit?.companyDescription ||
+    record.hubspotCompanyData?.description ||
+    undefined;
+
   return {
     diligenceId: record.id,
     score: record.score?.overall,
     dataQuality: record.score?.dataQuality,
     industry: record.industry,
     recommendation: record.recommendation,
+    companyDescription,
+    whyFits: record.thesisFit?.whyFits?.length ? record.thesisFit.whyFits : undefined,
+    whyNotFit: record.thesisFit?.whyNotFit?.length ? record.thesisFit.whyNotFit : undefined,
     hubspotCompany: record.hubspotCompanyData
       ? {
           industrySector: record.hubspotCompanyData.industrySector || record.hubspotCompanyData.industry,

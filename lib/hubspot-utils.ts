@@ -12,16 +12,22 @@ export const DEAL_PROPERTIES = [
   "createdate",
   "hs_lastmodifieddate",
   "hs_object_id",
-  "industry_sector", // Correct HubSpot property for industry
-  "industry", // Fallback
+  "industry_sector",
+  "industry",
   "description",
   "dealtype",
-  "hs_next_step",
-  "next_step",
   "deal_terms",
   "terms",
-  "notes_next_steps",
-  "associatedcompanyid", // To get the associated company
+  "associatedcompanyid",
+  "round_still_open",
+  // Funding round financials (try both naming conventions for compatibility)
+  "raise_amount_in_millions",
+  "committed_funding_in_millions",
+  "deal_valuation_post_money_in_millions",
+  "raise_amount",
+  "committed_funding",
+  "deal_valuation",
+  "portco_arr",
 ];
 
 // Pipelines to include (Fund I and Fund II only, exclude fundraising pipelines)
@@ -32,9 +38,15 @@ export const ALLOWED_PIPELINES = [
 ];
 
 // Map HubSpot deal to our Deal type
-export function mapHubSpotDealToAppDeal(hubspotDeal: any, stageMap?: Map<string, any>): Deal {
+// companyData is optionally provided from a batch company fetch (description, industry, industrySector)
+export function mapHubSpotDealToAppDeal(
+  hubspotDeal: any,
+  stageMap?: Map<string, any>,
+  companyData?: Record<string, any>,
+): Deal {
   const properties = hubspotDeal.properties;
-  
+  const company = companyData || {};
+
   // Format amount
   const amount = properties.amount 
     ? `$${parseFloat(properties.amount).toLocaleString()}`
@@ -60,20 +72,55 @@ export function mapHubSpotDealToAppDeal(hubspotDeal: any, stageMap?: Map<string,
     ? new Date(properties.createdate).toISOString().split("T")[0]
     : new Date().toISOString().split("T")[0];
 
-  // Get next steps and deal terms
-  const nextSteps = properties.hs_next_step || properties.next_step || properties.notes_next_steps || "";
+  // Deal terms
   const dealTerms = properties.deal_terms || properties.terms || "";
 
-  // Format industry - convert COMPUTER_SOFTWARE to Computer Software
-  const rawIndustry = properties.industry_sector || properties.industry || properties.dealtype || "N/A";
-  const formattedIndustry = rawIndustry === "N/A" 
-    ? "N/A" 
-    : rawIndustry
-        .replace(/_/g, " ")
-        .toLowerCase()
-        .split(" ")
-        .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(" ");
+  // Funding round financials — try _in_millions naming first, fall back to short names
+  const parseMillions = (v: string | undefined | null): number | undefined => {
+    const n = parseFloat(v || "");
+    return isNaN(n) ? undefined : n;
+  };
+  // Format portco_arr (stored as plain dollar integer in HubSpot) to a display string
+  const formatArrDollars = (v: string | undefined | null): string | undefined => {
+    if (!v) return undefined;
+    const n = parseFloat(v);
+    if (isNaN(n)) return undefined;
+    if (n >= 1_000_000) {
+      const m = n / 1_000_000;
+      return `$${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+    }
+    if (n >= 1_000) return `$${Math.round(n / 1000)}K`;
+    return `$${Math.round(n).toLocaleString()}`;
+  };
+
+  const raiseAmount = parseMillions(properties.raise_amount_in_millions ?? properties.raise_amount);
+  const committedFunding = parseMillions(properties.committed_funding_in_millions ?? properties.committed_funding);
+  const dealValuation = parseMillions(properties.deal_valuation_post_money_in_millions ?? properties.deal_valuation);
+
+  // Industry: prefer company's intake sector field, then company industry, then deal industry
+  const rawCompanyIndustrySector = company.what_industry_sector_do_you_operate_in___please_select_all_that_apply_ || "";
+  const rawCompanyIndustry = company.industry || "";
+  const rawDealIndustry = properties.industry_sector || properties.industry || properties.dealtype || "N/A";
+  const rawIndustry = rawCompanyIndustrySector || rawCompanyIndustry || rawDealIndustry;
+
+  const humanizeIndustry = (raw: string) =>
+    raw === "N/A" || !raw
+      ? "N/A"
+      : raw
+          .replace(/_/g, " ")
+          .toLowerCase()
+          .split(" ")
+          .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+
+  const formattedIndustry = humanizeIndustry(rawIndustry);
+  const formattedCompanyIndustry = rawCompanyIndustrySector || rawCompanyIndustry
+    ? humanizeIndustry(rawCompanyIndustrySector || rawCompanyIndustry)
+    : undefined;
+
+  // Description: prefer company description over deal description
+  const companyDescription = (company.description || "").trim() || undefined;
+  const description = companyDescription || properties.description || "";
 
   // Build HubSpot URL
   const portalId = process.env.NEXT_PUBLIC_HUBSPOT_PORTAL_ID || "21880552";
@@ -83,19 +130,25 @@ export function mapHubSpotDealToAppDeal(hubspotDeal: any, stageMap?: Map<string,
     id: hubspotDeal.id,
     name: properties.dealname || "Untitled Deal",
     industry: formattedIndustry,
+    companyIndustry: formattedCompanyIndustry,
     stage: stageId,
     stageName: stageName,
     amount: amount,
     date: createDate,
     status: status,
-    description: properties.description || "",
+    description,
+    companyDescription,
     hubspotId: hubspotDeal.id,
     pipeline: properties.pipeline || "N/A",
     companyId: properties.associatedcompanyid,
-    nextSteps: nextSteps,
     dealTerms: dealTerms,
-    createdate: properties.createdate, // HubSpot creation timestamp
-    url: hubspotUrl, // HubSpot record URL
+    createdate: properties.createdate,
+    url: hubspotUrl,
+    roundStillOpen: properties.round_still_open || undefined,
+    raiseAmount,
+    committedFunding,
+    dealValuation,
+    arr: formatArrDollars(properties.portco_arr),
   };
 }
 

@@ -93,9 +93,17 @@ export async function POST(request: Request) {
 
     // Level 1: Configurable Hard Filters (Quick elimination of obvious mismatches)
     const candidateDeals = deals.filter((deal: any) => {
-      // Parse deal amount
-      const dealAmount = parseFloat(deal.amount.replace(/[$,]/g, "")) || 0;
-      
+      // Determine the effective comparison amount for check size filtering:
+      // Prefer "available room" (raise - committed) so a VC's check must fit what's left.
+      // raiseAmount / committedFunding are stored in millions → convert to dollars.
+      let comparisonAmount = parseFloat(deal.amount.replace(/[$,]/g, "")) || 0;
+      if (deal.raiseAmount != null && deal.committedFunding != null) {
+        const availableRoom = (deal.raiseAmount - deal.committedFunding) * 1_000_000;
+        if (availableRoom > 0) comparisonAmount = availableRoom;
+      } else if (deal.raiseAmount != null) {
+        comparisonAmount = deal.raiseAmount * 1_000_000;
+      }
+
       // Parse VC's check size range
       let minCheck = 0;
       let maxCheck = Infinity;
@@ -116,8 +124,11 @@ export async function POST(request: Request) {
       const strictnessMultiplier = 1 - (checkSizeFilterStrictness / 100);
       const upperMultiplier = 1 + (checkSizeFilterStrictness / 100);
       
-      if (dealAmount > 0 && (dealAmount < minCheck * strictnessMultiplier || dealAmount > maxCheck * upperMultiplier)) {
-        console.log(`  ❌ Filtered out ${deal.name}: Check size mismatch (deal: $${dealAmount.toLocaleString()}, VC range: $${minCheck.toLocaleString()}-$${maxCheck === Infinity ? "∞" : maxCheck.toLocaleString()}, strictness: ${checkSizeFilterStrictness}%)`);
+      if (comparisonAmount > 0 && (comparisonAmount < minCheck * strictnessMultiplier || comparisonAmount > maxCheck * upperMultiplier)) {
+        const availableLabel = deal.raiseAmount != null && deal.committedFunding != null
+          ? `available $${(deal.raiseAmount - deal.committedFunding).toFixed(1)}M`
+          : `deal $${comparisonAmount.toLocaleString()}`;
+        console.log(`  ❌ Filtered out ${deal.name}: Check size mismatch (${availableLabel}, VC range: $${minCheck.toLocaleString()}-${maxCheck === Infinity ? "∞" : `$${maxCheck.toLocaleString()}`}, strictness: ${checkSizeFilterStrictness}%)`);
         return false;
       }
 
@@ -141,6 +152,30 @@ export async function POST(request: Request) {
           const quality = assessDataQuality(deal, partner);
           const diligenceContext = resolveDiligenceContextForDeal(deal, diligenceLookup);
           
+          // Build an authoritative description: prefer company description from deal enrichment
+          // or from diligence context, fall back to deal.description
+          const bestDescription =
+            deal.companyDescription ||
+            diligenceContext?.companyDescription ||
+            deal.description ||
+            "";
+
+          // Primary industry: prefer diligence industry or company-sourced industry
+          const bestIndustry =
+            diligenceContext?.industry ||
+            deal.companyIndustry ||
+            deal.industry ||
+            "N/A";
+
+          // Build funding round context for the prompt
+          const raiseStr = deal.raiseAmount != null ? `$${deal.raiseAmount}M` : null;
+          const committedStr = deal.committedFunding != null ? `$${deal.committedFunding}M` : null;
+          const availableRoomM = deal.raiseAmount != null && deal.committedFunding != null
+            ? deal.raiseAmount - deal.committedFunding
+            : null;
+          const availableStr = availableRoomM != null ? `$${availableRoomM.toFixed(1)}M` : null;
+          const valuationStr = deal.dealValuation != null ? `$${deal.dealValuation}M` : null;
+
           const prompt = `You are an expert VC matching analyst. Evaluate this deal against this VC partner using a structured, multi-factor approach.
 
 ═══ VC PARTNER INFORMATION ═══
@@ -154,30 +189,36 @@ Regions: ${partner.regions}
 
 ═══ DEAL INFORMATION ═══
 Name: ${deal.name}
-Industry: ${deal.industry}${deal.industry === "N/A" ? " ⚠️ MISSING" : ""}
-Description: ${deal.description || "⚠️ NOT PROVIDED - This limits matching accuracy"}
+Industry: ${bestIndustry}${bestIndustry === "N/A" ? " ⚠️ MISSING" : ""}
+Description: ${bestDescription || "⚠️ NOT PROVIDED - This limits matching accuracy"}
 Stage: ${deal.stageName || deal.stage}
 Amount: ${deal.amount}
+${raiseStr ? `Raise Amount: ${raiseStr}` : ""}
+${committedStr ? `Committed Funding: ${committedStr}` : ""}
+${availableStr ? `Available Room in Round: ${availableStr} (what's still open for new investors)` : ""}
+${valuationStr ? `Post-Money Valuation: ${valuationStr}` : ""}
 Deal Terms: ${deal.dealTerms || "Not provided"}
+${diligenceContext?.thesis?.problemSolving ? `Problem Being Solved: ${diligenceContext.thesis.problemSolving}` : ""}
+${diligenceContext?.thesis?.solution ? `Solution Approach: ${diligenceContext.thesis.solution}` : ""}
 
-═══ DILIGENCE CONTEXT (if available) ═══
+═══ DILIGENCE ASSESSMENT (if available) ═══
 ${diligenceContext ? `
-Linked Diligence Record: ${diligenceContext.diligenceId}
 Diligence Score: ${diligenceContext.score ?? "N/A"}/100
-Diligence Data Quality: ${diligenceContext.dataQuality ?? "N/A"}/100
-Diligence Industry: ${diligenceContext.industry || "N/A"}
 Recommendation: ${diligenceContext.recommendation || "N/A"}
-Founder Intake Industry/Sector: ${diligenceContext.hubspotCompany?.industrySector || "N/A"}
-Founder Intake Funding Stage: ${diligenceContext.hubspotCompany?.fundingStage || "N/A"}
-Founder Intake Funding Amount: ${diligenceContext.hubspotCompany?.fundingAmount || "N/A"}
-Founder Intake TAM: ${diligenceContext.hubspotCompany?.tamRange || "N/A"}
-Founder Intake Runway: ${diligenceContext.hubspotCompany?.currentRunway || "N/A"}
-Founder Intake Product Type: ${diligenceContext.hubspotCompany?.productCategorization || "N/A"}
-What is exciting:
+Why This Fits Our Thesis:
+${diligenceContext.whyFits?.length ? diligenceContext.whyFits.map((item) => `- ${item}`).join("\n") : "- Not assessed"}
+Why It Might Not Fit:
+${diligenceContext.whyNotFit?.length ? diligenceContext.whyNotFit.map((item) => `- ${item}`).join("\n") : "- None identified"}
+What is exciting about this deal:
 ${diligenceContext.thesis?.exciting?.length ? diligenceContext.thesis.exciting.map((item) => `- ${item}`).join("\n") : "- N/A"}
-What is concerning:
+Concerns:
 ${diligenceContext.thesis?.concerning?.length ? diligenceContext.thesis.concerning.map((item) => `- ${item}`).join("\n") : "- N/A"}
-Ideal customer: ${diligenceContext.thesis?.idealCustomer || "N/A"}
+Ideal Customer: ${diligenceContext.thesis?.idealCustomer || "N/A"}
+Funding Stage: ${diligenceContext.hubspotCompany?.fundingStage || "N/A"}
+Funding Amount: ${diligenceContext.hubspotCompany?.fundingAmount || "N/A"}
+TAM: ${diligenceContext.hubspotCompany?.tamRange || "N/A"}
+Runway: ${diligenceContext.hubspotCompany?.currentRunway || "N/A"}
+Product Type: ${diligenceContext.hubspotCompany?.productCategorization || "N/A"}
 ` : "No linked diligence context was found for this deal. Use only the deal and partner data above."}
 
 ═══ DATA QUALITY ASSESSMENT ═══
@@ -185,6 +226,7 @@ Deal Data Quality: ${quality.dealQuality}%${quality.dealWarnings.length > 0 ? ` 
 Partner Data Quality: ${quality.partnerQuality}%${quality.partnerWarnings.length > 0 ? ` (⚠️ ${quality.partnerWarnings.join(", ")})` : ""}
 
 ═══ EVALUATION INSTRUCTIONS ═══
+When diligence context is present, use the "Why This Fits Our Thesis" and "Why It Might Not Fit" bullets as authoritative signals for thesis alignment. These reflect our own team's internal assessment of the deal.
 
 Evaluate using WEIGHTED FACTORS (weights are configurable):
 1. **INDUSTRY ALIGNMENT (${scoringWeights.industry}% weight)**: How well does the deal's industry match the VC's investment space?
@@ -205,9 +247,10 @@ Evaluate using WEIGHTED FACTORS (weights are configurable):
    - Stage mismatch but flexible wording: 40-60 points
    - Clear mismatch: 0-30 points
 
-4. **CHECK SIZE FIT (${scoringWeights.checkSize}% weight)**: Deal amount within VC's check size range?
-   - Deal passed pre-filter, so should be reasonable
-   - Rate based on how well it fits within their sweet spot
+4. **CHECK SIZE FIT (${scoringWeights.checkSize}% weight)**: Can the VC's check fit in this round?
+   - Use "Available Room in Round" if provided — this is how much is still open for new investors
+   - VC's typical check size should be ≤ available room (otherwise they can't participate at their normal size)
+   - Deal passed pre-filter, so should be reasonable — rate based on how well it fits their sweet spot
 
 ═══ SCORING APPROACH ═══
 - Calculate weighted sub-scores for each factor

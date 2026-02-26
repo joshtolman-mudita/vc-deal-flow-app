@@ -73,40 +73,15 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
-  // Fetch diligence records with caching
+  // Fetch diligence records
   useEffect(() => {
     const fetchDiligence = async () => {
       try {
-        // Check sessionStorage cache first
-        const DILIGENCE_CACHE_KEY = "diligence_records_cache";
-        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-        
-        if (typeof window !== "undefined") {
-          const cached = sessionStorage.getItem(DILIGENCE_CACHE_KEY);
-          if (cached) {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_DURATION) {
-              setDiligenceRecords(data);
-              setLoadingDiligence(false);
-              return;
-            }
-          }
-        }
-
-        // Fetch fresh data
         const response = await fetch("/api/diligence");
         const data = await response.json();
         
         if (data.success && data.records) {
           setDiligenceRecords(data.records);
-          
-          // Cache the results
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem(
-              DILIGENCE_CACHE_KEY,
-              JSON.stringify({ data: data.records, timestamp: Date.now() })
-            );
-          }
         }
       } catch (err) {
         console.error("Failed to fetch diligence records:", err);

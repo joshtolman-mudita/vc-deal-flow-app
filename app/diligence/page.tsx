@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { FileSearch, Plus, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Globe } from "lucide-react";
+import { FileSearch, Plus, Eye, Trash2, AlertTriangle, Globe, Search, X } from "lucide-react";
 import { DiligenceRecord } from "@/types/diligence";
 import { useRouter } from "next/navigation";
+import FilterDrawer, { FilterDrawerTrigger, FilterSection } from "@/components/FilterDrawer";
+import ActiveFilterBar, { FilterChip } from "@/components/ActiveFilterBar";
+import SortableHeader from "@/components/SortableHeader";
+import { useMultiSort, SortSpec } from "@/lib/hooks/useMultiSort";
 
-type SortField = 'company' | 'priority' | 'stage' | 'score' | 'date';
-type SortDirection = 'asc' | 'desc';
 type PriorityFilter = 'all' | 'high' | 'medium' | 'low';
 
 interface HubSpotStage {
@@ -48,8 +50,12 @@ export default function DiligencePage() {
   const [records, setRecords] = useState<DiligenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortField, setSortField] = useState<SortField>('score');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const { sorts, handleSort } = useMultiSort({
+    defaultSorts: [{ field: 'priority', direction: 'desc' }, { field: 'score', direction: 'desc' }],
+    defaultDescFields: ['score', 'date', 'priority'],
+  });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [nameSearch, setNameSearch] = useState("");
   const [pipelines, setPipelines] = useState<HubSpotPipeline[]>([]);
   const [selectedStages, setSelectedStages] = useState<string[]>([]);
   const [showUnlinked, setShowUnlinked] = useState(true);
@@ -196,68 +202,59 @@ export default function DiligencePage() {
     }
   };
 
-  const sortRecords = (recordsToSort: DiligenceRecord[], field: SortField, direction: SortDirection) => {
-    const sorted = [...recordsToSort].sort((a, b) => {
-      let aValue: any;
-      let bValue: any;
+  // Multi-column semantic sort for diligence records
+  const sortRecords = (recordsToSort: DiligenceRecord[], sortSpecs: SortSpec[]): DiligenceRecord[] => {
+    if (sortSpecs.length === 0) return recordsToSort;
+    return [...recordsToSort].sort((a, b) => {
+      for (const { field, direction } of sortSpecs) {
+        const mult = direction === 'asc' ? 1 : -1;
+        let aValue: any;
+        let bValue: any;
 
-      switch (field) {
-        case 'company':
-          aValue = a.companyName.toLowerCase();
-          bValue = b.companyName.toLowerCase();
-          break;
-        case 'stage':
-          // Sort by stage display order if available
-          const aStage = pipelines.flatMap(p => p.stages).find(s => s.id === a.hubspotDealStageId);
-          const bStage = pipelines.flatMap(p => p.stages).find(s => s.id === b.hubspotDealStageId);
-          aValue = aStage?.displayOrder ?? 999;
-          bValue = bStage?.displayOrder ?? 999;
-          break;
-        case 'priority': {
-          const rank = (record: DiligenceRecord) => {
-            const normalized = normalizePriorityKey(resolvePriorityValue(record));
-            if (normalized === 'high') return 3;
-            if (normalized === 'medium') return 2;
-            if (normalized === 'low') return 1;
-            return 0;
-          };
-          aValue = rank(a);
-          bValue = rank(b);
-          break;
+        switch (field) {
+          case 'company':
+            aValue = a.companyName.toLowerCase();
+            bValue = b.companyName.toLowerCase();
+            break;
+          case 'stage': {
+            // Semantic: sort by HubSpot pipeline displayOrder
+            const allStages = pipelines.flatMap(p => p.stages);
+            const aStage = allStages.find(s => s.id === a.hubspotDealStageId);
+            const bStage = allStages.find(s => s.id === b.hubspotDealStageId);
+            aValue = aStage?.displayOrder ?? 999;
+            bValue = bStage?.displayOrder ?? 999;
+            break;
+          }
+          case 'priority': {
+            // Semantic: high=3, medium=2, low=1, none=0
+            const rank = (record: DiligenceRecord) => {
+              const normalized = normalizePriorityKey(resolvePriorityValue(record));
+              if (normalized === 'high') return 3;
+              if (normalized === 'medium') return 2;
+              if (normalized === 'low') return 1;
+              return 0;
+            };
+            aValue = rank(a);
+            bValue = rank(b);
+            break;
+          }
+          case 'score':
+            aValue = a.score ? getEffectiveOverallScore(a) : -1;
+            bValue = b.score ? getEffectiveOverallScore(b) : -1;
+            break;
+          case 'date':
+            aValue = new Date(a.createdAt).getTime();
+            bValue = new Date(b.createdAt).getTime();
+            break;
+          default:
+            continue;
         }
-        case 'score':
-          aValue = a.score ? getEffectiveOverallScore(a) : -1; // Put unscored at the end
-          bValue = b.score ? getEffectiveOverallScore(b) : -1;
-          break;
-        case 'date':
-          aValue = new Date(a.createdAt).getTime();
-          bValue = new Date(b.createdAt).getTime();
-          break;
-        default:
-          return 0;
-      }
 
-      if (aValue < bValue) return direction === 'asc' ? -1 : 1;
-      if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+        const cmp = aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+        if (cmp !== 0) return cmp * mult;
+      }
       return 0;
     });
-
-    return sorted;
-  };
-
-  const handleSort = (field: SortField) => {
-    let newDirection: SortDirection = 'asc';
-    
-    if (sortField === field) {
-      // Toggle direction if clicking the same field
-      newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      // Default to desc for score and date, asc for others
-      newDirection = (field === 'score' || field === 'date' || field === 'priority') ? 'desc' : 'asc';
-    }
-    
-    setSortField(field);
-    setSortDirection(newDirection);
   };
 
   const toggleStageFilter = (stageId: string) => {
@@ -268,6 +265,79 @@ export default function DiligencePage() {
       return [...prev, stageId];
     });
   };
+
+  const clearAllDiligenceFilters = useCallback(() => {
+    const allStageIds = pipelines.flatMap(p => p.stages).map(s => s.id);
+    setNameSearch("");
+    setSelectedStages(allStageIds);
+    setPriorityFilter('all');
+    setShowUnlinked(true);
+    setShowOffThesisOnly(false);
+  }, [pipelines]);
+
+  // Active filter chips for the bar above the table
+  const activeFilterChips = useMemo((): FilterChip[] => {
+    const chips: FilterChip[] = [];
+    const allStages = pipelines.flatMap(p => p.stages);
+
+    // Stage chips
+    if (selectedStages.length < allStages.length) {
+      const selectedLabels = selectedStages
+        .map(id => allStages.find(s => s.id === id)?.label || id);
+      if (selectedLabels.length <= 3) {
+        selectedLabels.forEach((label, i) => {
+          const stageId = selectedStages[i];
+          chips.push({
+            id: `stage-${stageId}`,
+            label,
+            onRemove: () => setSelectedStages(prev => prev.filter(s => s !== stageId)),
+          });
+        });
+      } else {
+        chips.push({
+          id: 'stages',
+          label: `Stages: ${selectedStages.length}/${allStages.length}`,
+          onRemove: () => setSelectedStages(allStages.map(s => s.id)),
+        });
+      }
+    }
+
+    if (priorityFilter !== 'all') {
+      chips.push({
+        id: 'priority',
+        label: `Priority: ${priorityFilter.charAt(0).toUpperCase() + priorityFilter.slice(1)}`,
+        onRemove: () => setPriorityFilter('all'),
+      });
+    }
+
+    if (!showUnlinked) {
+      chips.push({
+        id: 'unlinked',
+        label: 'Hiding Unlinked',
+        onRemove: () => setShowUnlinked(true),
+      });
+    }
+
+    if (showOffThesisOnly) {
+      chips.push({
+        id: 'off-thesis',
+        label: 'Off-Thesis Only',
+        onRemove: () => setShowOffThesisOnly(false),
+      });
+    }
+
+    return chips;
+  }, [selectedStages, pipelines, priorityFilter, showUnlinked, showOffThesisOnly]);
+
+  const activeFilterCount = useMemo(() => {
+    const allStageCount = pipelines.flatMap(p => p.stages).length;
+    let n = 0;
+    if (selectedStages.length < allStageCount) n++;
+    if (priorityFilter !== 'all') n++;
+    if (!showUnlinked) n++;
+    if (showOffThesisOnly) n++;
+    return n;
+  }, [selectedStages, pipelines, priorityFilter, showUnlinked, showOffThesisOnly]);
 
   const updateRecordStage = async (id: string, stageId: string, stageLabel: string) => {
     try {
@@ -481,6 +551,10 @@ export default function DiligencePage() {
 
   const displayedRecords = useMemo(() => {
     const filtered = records.filter(record => {
+      if (nameSearch.trim() !== "") {
+        const q = nameSearch.trim().toLowerCase();
+        if (!(record.companyName || "").toLowerCase().includes(q)) return false;
+      }
       if (priorityFilter !== "all") {
         const normalizedPriority = normalizePriorityKey(resolvePriorityValue(record));
         if (normalizedPriority !== priorityFilter) {
@@ -497,8 +571,8 @@ export default function DiligencePage() {
       // Show records with selected stages
       return selectedStages.includes(record.hubspotDealStageId);
     });
-    return sortRecords(filtered, sortField, sortDirection);
-  }, [records, selectedStages, showUnlinked, showOffThesisOnly, sortField, sortDirection, pipelines, priorityFilter]);
+    return sortRecords(filtered, sorts);
+  }, [records, nameSearch, selectedStages, showUnlinked, showOffThesisOnly, sorts, pipelines, priorityFilter]);
 
   const thesisFitLabel = (fit?: "on_thesis" | "mixed" | "off_thesis") => {
     if (fit === "on_thesis") return "On thesis";
@@ -513,14 +587,6 @@ export default function DiligencePage() {
     return "bg-gray-100 text-gray-700";
   };
 
-  const getSortIcon = (field: SortField) => {
-    if (sortField !== field) {
-      return <ArrowUpDown className="h-4 w-4 text-gray-400" />;
-    }
-    return sortDirection === 'asc' 
-      ? <ArrowUp className="h-4 w-4 text-blue-600" />
-      : <ArrowDown className="h-4 w-4 text-blue-600" />;
-  };
 
   const performDelete = async (id: string, folderAction: 'keep' | 'archive' | 'delete') => {
     try {
@@ -700,71 +766,120 @@ export default function DiligencePage() {
           </div>
         )}
 
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-700">Stage Filter:</span>
+        {/* ── Filter Drawer ──────────────────────────────────────────────── */}
+        <FilterDrawer
+          open={filterDrawerOpen}
+          onClose={() => setFilterDrawerOpen(false)}
+          activeCount={activeFilterCount}
+          onClearAll={clearAllDiligenceFilters}
+        >
+          {/* HubSpot Stage */}
+          <FilterSection title="HubSpot Stage">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400">
+                {selectedStages.length}/{pipelines.flatMap(p => p.stages).length} selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedStages(pipelines.flatMap(p => p.stages).map(s => s.id))}
+                  className="text-xs text-blue-600 hover:underline"
+                >All</button>
+                <button
+                  onClick={() => setSelectedStages([])}
+                  className="text-xs text-gray-500 hover:underline"
+                >None</button>
+              </div>
+            </div>
+            {/* Not Linked toggle */}
             <button
               onClick={() => setShowUnlinked(!showUnlinked)}
-              className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                showUnlinked
-                  ? 'bg-gray-200 text-gray-800'
-                  : 'bg-gray-100 text-gray-600'
+              className={`mb-2 w-full rounded-md px-3 py-1.5 text-xs font-semibold transition-colors text-left ${
+                showUnlinked ? 'bg-gray-200 text-gray-800' : 'bg-gray-100 text-gray-500 line-through'
               }`}
             >
               Not Linked
             </button>
-            {pipelines.flatMap(pipeline => 
-              pipeline.stages.map(stage => (
+            <div className="flex flex-wrap gap-1.5">
+              {pipelines.flatMap(pipeline =>
+                pipeline.stages.map(stage => (
+                  <button
+                    key={stage.id}
+                    onClick={() => toggleStageFilter(stage.id)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      selectedStages.includes(stage.id)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    title={`${pipeline.label}: ${stage.label}`}
+                  >
+                    {stage.label}
+                  </button>
+                ))
+              )}
+            </div>
+          </FilterSection>
+
+          {/* Priority */}
+          <FilterSection title="Priority">
+            <div className="flex gap-2">
+              {(['all', 'high', 'medium', 'low'] as PriorityFilter[]).map(opt => (
                 <button
-                  key={stage.id}
-                  onClick={() => toggleStageFilter(stage.id)}
-                  className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                    selectedStages.includes(stage.id)
+                  key={opt}
+                  onClick={() => setPriorityFilter(opt)}
+                  className={`flex-1 rounded-md py-1.5 text-xs font-medium capitalize transition-colors ${
+                    priorityFilter === opt
                       ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-600'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
-                  title={`${pipeline.label}: ${stage.label}`}
                 >
-                  {stage.label}
+                  {opt === 'all' ? 'All' : opt.charAt(0).toUpperCase() + opt.slice(1)}
                 </button>
-              ))
-            )}
-            <label className="ml-2 text-sm font-medium text-gray-700" htmlFor="priority-filter">
-              Priority:
-            </label>
-            <select
-              id="priority-filter"
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value as PriorityFilter)}
-              className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700"
-              title="Filter records by priority"
-            >
-              <option value="all">All</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
-            {priorityFilter !== "all" && (
-              <button
-                onClick={() => setPriorityFilter("all")}
-                className="rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-                title="Clear priority filter"
-              >
-                Clear priority
-              </button>
-            )}
+              ))}
+            </div>
+          </FilterSection>
+
+          {/* Off-thesis toggle */}
+          <FilterSection title="Thesis Fit">
             <button
               onClick={() => setShowOffThesisOnly(!showOffThesisOnly)}
-              className={`rounded-md px-3 py-1 text-xs font-semibold ${
+              className={`w-full rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                 showOffThesisOnly
-                  ? "bg-red-600 text-white"
-                  : "bg-red-50 text-red-700"
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
-              title="Show only records whose thesis-first/fit result is off thesis"
             >
-              Off-thesis only
+              {showOffThesisOnly ? '✓ ' : ''}Off-Thesis Only
             </button>
+          </FilterSection>
+        </FilterDrawer>
+
+        {/* ── Control row: search + trigger + active chips + record count ─────── */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Company search */}
+          <div className="relative flex items-center">
+            <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search company…"
+              value={nameSearch}
+              onChange={(e) => setNameSearch(e.target.value)}
+              className="rounded border border-gray-300 pl-6 pr-6 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 w-40"
+            />
+            {nameSearch !== "" && (
+              <button onClick={() => setNameSearch("")} className="absolute right-1.5 text-gray-400 hover:text-gray-600">
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
+
+          <FilterDrawerTrigger
+            onClick={() => setFilterDrawerOpen(true)}
+            activeCount={activeFilterCount}
+          />
+          <ActiveFilterBar chips={activeFilterChips} onClearAll={clearAllDiligenceFilters} />
+          <span className="ml-auto whitespace-nowrap text-sm text-gray-500">
+            {displayedRecords.length} of {records.length} records
+          </span>
         </div>
 
         {/* Records List */}
@@ -791,14 +906,8 @@ export default function DiligencePage() {
               <table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th 
-                      className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('company')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>Company</span>
-                        {getSortIcon('company')}
-                      </div>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                      <SortableHeader field="company" label="Company" sorts={sorts} onSort={handleSort} />
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       Description
@@ -806,41 +915,17 @@ export default function DiligencePage() {
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       Industry
                     </th>
-                    <th
-                      className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('priority')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>Priority</span>
-                        {getSortIcon('priority')}
-                      </div>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                      <SortableHeader field="priority" label="Priority" sorts={sorts} onSort={handleSort} />
                     </th>
-                    <th 
-                      className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('stage')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>HubSpot Stage</span>
-                        {getSortIcon('stage')}
-                      </div>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                      <SortableHeader field="stage" label="HubSpot Stage" sorts={sorts} onSort={handleSort} />
                     </th>
-                    <th 
-                      className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('score')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>Score</span>
-                        {getSortIcon('score')}
-                      </div>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                      <SortableHeader field="score" label="Score" sorts={sorts} onSort={handleSort} />
                     </th>
-                    <th 
-                      className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('date')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>Date</span>
-                        {getSortIcon('date')}
-                      </div>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                      <SortableHeader field="date" label="Date" sorts={sorts} onSort={handleSort} />
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       Actions

@@ -244,3 +244,13 @@ export async function searchDiligenceRecords(query: string): Promise<DiligenceRe
     record.companyName.toLowerCase().includes(lowerQuery)
   );
 }
+
+/**
+ * Find the first diligence record linked to a given HubSpot deal ID
+ */
+export async function findDiligenceRecordByHubspotDealId(
+  hubspotDealId: string
+): Promise<DiligenceRecord | null> {
+  const allRecords = await listDiligenceRecords();
+  return allRecords.find((r) => r.hubspotDealId === hubspotDealId) ?? null;
+}

@@ -2822,9 +2822,9 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
     { key: "marketGrowthRate", label: "Market Growth Rate", placeholder: "12% CAGR" },
     { key: "acv", label: "ACV", placeholder: "$25K" },
     { key: "yoyGrowthRate", label: "YoY Growth Rate", placeholder: "48%" },
-    { key: "fundingAmount", label: "Funding Amount", placeholder: "$1.5M" },
-    { key: "committed", label: "Committed", placeholder: "$200K" },
-    { key: "valuation", label: "Deal Valuation (Post-money, M)", placeholder: "15" },
+    { key: "fundingAmount", label: "Raise Amount ($M)", placeholder: "e.g. 4 or $4M" },
+    { key: "committed", label: "Committed ($M)", placeholder: "e.g. 1.5 or $1.5M" },
+    { key: "valuation", label: "Post-Money Valuation ($M)", placeholder: "e.g. 20 or $20M" },
     { key: "dealTerms", label: "Deal Terms", placeholder: "SAFE, 20% discount, no cap" },
     { key: "lead", label: "Lead", placeholder: "Lead investor / syndicate context" },
     { key: "currentRunway", label: "Current Runway", placeholder: "12 months" },
@@ -2914,6 +2914,24 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
     setMetricsDraft(metricsFromRecord(record?.metrics));
   };
 
+  // Normalise a metric value that represents millions into a plain number string
+  // suitable for HubSpot properties like raise_amount_in_millions.
+  const normalizeMetricToMillions = (raw: string): string => {
+    if (!raw) return "";
+    const cleaned = raw.toLowerCase().replace(/[$,\s]/g, "");
+    const match = cleaned.match(/^(-?\d+(?:\.\d+)?)([kmb])?$/);
+    if (!match) return raw; // pass-through for ranges/text
+    const base = Number(match[1]);
+    if (!Number.isFinite(base)) return raw;
+    let millions: number;
+    if (match[2] === "b") millions = base * 1000;
+    else if (match[2] === "m") millions = base;
+    else if (match[2] === "k") millions = base / 1000;
+    else millions = base > 100000 ? base / 1_000_000 : base;
+    const rounded = Math.round(millions * 100) / 100;
+    return Number.isInteger(rounded) ? String(Math.trunc(rounded)) : String(rounded);
+  };
+
   const handleSaveMetrics = async () => {
     if (!record) return;
     setSavingMetrics(true);
@@ -2946,6 +2964,37 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
           setHubspotCompanyData(resolvedHubspotCompany);
         }
         setEditingMetrics(false);
+
+        // Push raise/committed/valuation/ARR straight to the linked HubSpot deal
+        const linkedDealId = data.record?.hubspotDealId || record.hubspotDealId;
+        if (linkedDealId) {
+          const raiseRaw = payloadMetrics?.fundingAmount?.value || "";
+          const committedRaw = payloadMetrics?.committed?.value || "";
+          const valuationRaw = payloadMetrics?.valuation?.value || "";
+          const arrRaw = payloadMetrics?.arr?.value || "";
+          const hsProps: Record<string, string> = {};
+          if (raiseRaw) hsProps["raise_amount_in_millions"] = normalizeMetricToMillions(raiseRaw);
+          if (committedRaw) hsProps["committed_funding_in_millions"] = normalizeMetricToMillions(committedRaw);
+          if (valuationRaw) hsProps["deal_valuation_post_money_in_millions"] = normalizeMetricToMillions(valuationRaw);
+          if (arrRaw) {
+            // portco_arr is a number field in HubSpot — store as plain dollars
+            const arrDollars = arrRaw.replace(/[$,\s]/g, "").toLowerCase().replace(/^([\d.]+)([kmb]?)$/, (_, n, s) => {
+              const v = parseFloat(n);
+              if (s === "b") return String(Math.round(v * 1_000_000_000));
+              if (s === "m") return String(Math.round(v * 1_000_000));
+              if (s === "k") return String(Math.round(v * 1_000));
+              return String(Math.round(v));
+            });
+            if (arrDollars && !isNaN(Number(arrDollars))) hsProps["portco_arr"] = arrDollars;
+          }
+          if (Object.keys(hsProps).length > 0) {
+            fetch("/api/hubspot/deal", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ dealId: linkedDealId, properties: hsProps }),
+            }).catch((err) => console.warn("HubSpot metric sync failed (non-blocking):", err));
+          }
+        }
 
         const shouldRescore = window.confirm(
           "Key metrics saved. Re-score now to refresh AI scores and details?"
@@ -2983,6 +3032,35 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
       (doc?.fileType === "link" || doc?.fileType === "url") &&
       doc?.linkIngestStatus !== "ingested"
   );
+  const isUnreadableExtractedTextForDisplay = (text?: string): boolean => {
+    const value = String(text || "").trim();
+    if (!value) return true;
+    return [
+      /\[pdf was parsed but contains minimal extractable text/i,
+      /\[pdf parsing failed:/i,
+      /\[document could not be parsed\]/i,
+      /\[image file - text extraction not available/i,
+      /\[excel parsing error:/i,
+      /\[powerpoint file appears to be empty/i,
+      /\[docx appears to be empty\]/i,
+    ].some((pattern) => pattern.test(value));
+  };
+  const getDocumentParseIssue = (doc: any): string | null => {
+    const isLink = doc?.fileType === "link" || doc?.fileType === "url" || Boolean(doc?.externalUrl);
+    if (isLink) {
+      if (doc?.linkIngestStatus === "ingested") return null;
+      if (doc?.linkIngestStatus === "email_required") {
+        return doc?.linkIngestMessage || "Link needs an access email before content can be ingested.";
+      }
+      return doc?.linkIngestMessage || "Link could not be parsed and is not used in thesis/scoring.";
+    }
+    if (isUnreadableExtractedTextForDisplay(doc?.extractedText)) {
+      return "Document content could not be read/parsed and is not used in thesis/scoring.";
+    }
+    return null;
+  };
+  const documentsWithParseIssues = (record?.documents || []).filter((doc: any) => Boolean(getDocumentParseIssue(doc)));
+  const documentParseIssueCount = documentsWithParseIssues.length;
 
   const HubSpotIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
@@ -3435,10 +3513,21 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
           <div className="flex gap-2">
             <button
               onClick={() => setShowDocumentsModal(true)}
-              className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className={`flex items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50 ${
+                documentParseIssueCount > 0
+                  ? "border-amber-300 text-amber-800"
+                  : "border-gray-300 text-gray-700"
+              }`}
               title="View documents"
             >
-              <Folder className="h-4 w-4" />
+              <span className="relative">
+                <Folder className={`h-4 w-4 ${documentParseIssueCount > 0 ? "text-amber-700" : ""}`} />
+                {documentParseIssueCount > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                    {documentParseIssueCount > 9 ? "9+" : documentParseIssueCount}
+                  </span>
+                )}
+              </span>
               Documents ({record.documents.length})
             </button>
             <button
@@ -3673,7 +3762,7 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                             : undefined;
                       return (
                         <div key={field.key} className="rounded-md border border-gray-200 px-2 py-1.5">
-                          <div className="mb-1 flex items-center justify-between">
+                          <div className="mb-1">
                             <span className="text-xs font-medium text-gray-700">{field.label}</span>
                           </div>
                           {editingMetrics ? (
@@ -3689,6 +3778,11 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                               {(field.key === "currentRunway" || field.key === "postFundingRunway") && (
                                 <p className="mt-1 text-[10px] text-gray-500">
                                   Prefer months (example: 12 months). Ranges still work if needed (example: 6 - 12 months).
+                                </p>
+                              )}
+                              {(field.key === "fundingAmount" || field.key === "committed" || field.key === "valuation") && (
+                                <p className="mt-1 text-[10px] text-gray-500">
+                                  Enter in millions — e.g. <span className="font-mono">4</span> or <span className="font-mono">$4M</span>. Saved to HubSpot when linked.
                                 </p>
                               )}
                             </div>
@@ -4768,11 +4862,26 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                     </p>
                   </div>
                 )}
+                {documentParseIssueCount > 0 && (
+                  <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2">
+                    <p className="text-xs font-semibold text-red-900">
+                      Parse warning: {documentParseIssueCount} document
+                      {documentParseIssueCount > 1 ? "s have" : " has"} unreadable or unparsed content.
+                    </p>
+                    <p className="mt-0.5 text-xs text-red-800">
+                      These items are highlighted below and will be excluded from thesis/scoring until fixed.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-2">
-                  {record.documents.map((doc) => (
+                  {record.documents.map((doc) => {
+                    const parseIssue = getDocumentParseIssue(doc);
+                    return (
                     <div
                       key={doc.id}
-                      className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                      className={`rounded-md border px-3 py-2 ${
+                        parseIssue ? "border-red-200 bg-red-50/40" : "border-gray-200 bg-gray-50"
+                      }`}
                     >
                       <div className="flex items-center justify-between">
                         <a
@@ -4781,7 +4890,7 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                           rel="noopener noreferrer"
                           className="flex items-center gap-2 flex-1 min-w-0 hover:text-blue-600 transition-colors"
                         >
-                          <FileText className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                          <FileText className={`h-4 w-4 flex-shrink-0 ${parseIssue ? "text-red-500" : "text-gray-400"}`} />
                           <p className="text-sm font-medium truncate">{doc.name}</p>
                           {getLinkIngestBadge(doc)}
                           <ExternalLink className="h-3 w-3 text-gray-400 flex-shrink-0" />
@@ -4833,9 +4942,14 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                           </div>
                         </div>
                       )}
+                      {parseIssue && (
+                        <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800">
+                          <span className="font-semibold">Warning:</span> {parseIssue}
+                        </div>
+                      )}
                       {doc.externalUrl && doc.linkIngestMessage && (
                         <div className="mt-2 text-xs text-gray-600">
-                          Ingest: {doc.linkIngestMessage}
+                          Ingest detail: {doc.linkIngestMessage}
                           {doc.linkIngestedAt && (
                             <span className="ml-2 text-gray-500">
                               ({new Date(doc.linkIngestedAt).toLocaleString()})
@@ -4844,7 +4958,7 @@ export default function DiligenceDetailPage({ params }: { params: Promise<{ id: 
                         </div>
                       )}
                     </div>
-                  ))}
+                  )})}
                 </div>
               </div>
             </div>

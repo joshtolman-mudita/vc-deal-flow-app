@@ -591,6 +591,127 @@ function NewDiligenceForm() {
     }
   };
 
+  const normalizeCompanyNameForMatch = (value: string): string => {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\b(inc|llc|ltd|corp|corporation|company|co)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  const levenshteinDistance = (a: string, b: string): number => {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+    for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i += 1) {
+      for (let j = 1; j <= b.length; j += 1) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost,
+        );
+      }
+    }
+    return dp[a.length][b.length];
+  };
+
+  const confirmNotDuplicateDiligence = async (normalizedCompanyUrl: string): Promise<boolean> => {
+    const proposedName = companyName.trim();
+    if (!proposedName) return true;
+
+    const proposedNormalized = normalizeCompanyNameForMatch(proposedName);
+    if (!proposedNormalized) return true;
+
+    const proposedDomain = extractDomain(normalizedCompanyUrl);
+
+    try {
+      const response = await fetch("/api/diligence");
+      const data = await response.json();
+      const records: Array<{ id: string; companyName?: string; companyUrl?: string; createdAt?: string; status?: string }> =
+        Array.isArray(data?.records) ? data.records : [];
+
+      const candidates = records
+        .map((record) => {
+          const existingName = String(record.companyName || "").trim();
+          if (!existingName) return null;
+
+          const existingNormalized = normalizeCompanyNameForMatch(existingName);
+          if (!existingNormalized) return null;
+
+          let score = 0;
+          let reason = "";
+
+          if (existingNormalized === proposedNormalized) {
+            score = 1;
+            reason = "same company name";
+          } else {
+            const minLen = Math.min(existingNormalized.length, proposedNormalized.length);
+            if (minLen >= 5 && (existingNormalized.includes(proposedNormalized) || proposedNormalized.includes(existingNormalized))) {
+              score = 0.92;
+              reason = "very similar company name";
+            } else {
+              const distance = levenshteinDistance(existingNormalized, proposedNormalized);
+              const similarity = 1 - distance / Math.max(existingNormalized.length, proposedNormalized.length, 1);
+              if (similarity >= 0.82) {
+                score = similarity;
+                reason = "fuzzy name match";
+              }
+            }
+          }
+
+          const existingDomain = extractDomain(record.companyUrl || "");
+          if (proposedDomain && existingDomain && proposedDomain === existingDomain) {
+            if (score < 0.95) score = 0.95;
+            reason = reason ? `${reason} + same domain` : "same domain";
+          }
+
+          if (score <= 0) return null;
+          return {
+            id: record.id,
+            existingName,
+            createdAt: record.createdAt,
+            status: record.status,
+            score,
+            reason,
+          };
+        })
+        .filter((candidate): candidate is {
+          id: string;
+          existingName: string;
+          createdAt: string | undefined;
+          status: string | undefined;
+          score: number;
+          reason: string;
+        } => Boolean(candidate))
+        .sort((a, b) => b.score - a.score);
+
+      if (candidates.length === 0) return true;
+
+      const topCandidates = candidates.slice(0, 3);
+      const details = topCandidates
+        .map((match) => {
+          const similarityPct = Math.round(match.score * 100);
+          const created = match.createdAt ? new Date(match.createdAt).toISOString().split("T")[0] : "unknown date";
+          const status = match.status || "unknown";
+          return `- ${match.existingName} (${similarityPct}% match, ${match.reason}, status: ${status}, created: ${created})`;
+        })
+        .join("\n");
+
+      const proceed = window.confirm(
+        `This looks like a potential duplicate diligence record:\n\n${details}\n\nDo you still want to create a new diligence record?`
+      );
+      return proceed;
+    } catch (err) {
+      console.warn("Duplicate diligence check failed; allowing create flow to continue.", err);
+      return true;
+    }
+  };
+
   const isPotentialDuplicateHubSpotStage = (deal: HubSpotDealLookup | null): boolean => {
     if (!deal) return false;
     const stageLabel = (deal.stageLabel || "").toLowerCase();
@@ -1516,6 +1637,8 @@ function NewDiligenceForm() {
   const startThesisCheckFlow = async () => {
     const normalizedCompanyUrl = validateStartInputs();
     if (!normalizedCompanyUrl) return;
+    const shouldProceed = await confirmNotDuplicateDiligence(normalizedCompanyUrl);
+    if (!shouldProceed) return;
     setPendingStartMode("thesis");
     setPendingNormalizedCompanyUrl(normalizedCompanyUrl);
     setShowHubSpotMatchModal(true);
@@ -1541,6 +1664,8 @@ function NewDiligenceForm() {
     }
     const normalizedCompanyUrl = validateStartInputs();
     if (!normalizedCompanyUrl) return;
+    const shouldProceed = await confirmNotDuplicateDiligence(normalizedCompanyUrl);
+    if (!shouldProceed) return;
     setPendingStartMode("full");
     setPendingNormalizedCompanyUrl(normalizedCompanyUrl);
     setShowHubSpotMatchModal(true);
